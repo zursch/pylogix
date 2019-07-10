@@ -22,5 +22,5 @@ from pylogix import PLC
 with PLC() as comm:
     comm = PLC()
     comm.IPAddress = '192.168.1.9'
-    value = comm.Read('Program:MiscHMI.TimeArray[0]')
+    value = comm.Read('Program:MiscHMI.TimeArray[0]')[1]
     print(value)

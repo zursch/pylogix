@@ -22,7 +22,7 @@ with PLC() as comm:
     read = True
     while read:
         try:
-            value = comm.Read('LargeArray[0]')
+            value = comm.Read('LargeArray[0]')[1]
             print(value)
             time.sleep(1)
         except KeyboardInterrupt:

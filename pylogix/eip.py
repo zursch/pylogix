@@ -82,6 +82,8 @@ class PLC:
         '''
         We have two options for reading depending on
         the arguments, read a single tag, or read an array
+
+        returns a tuple (tag, value, error)
         '''
         if isinstance(tag, (list, tuple)):
             if len(tag) == 1:
@@ -96,18 +98,16 @@ class PLC:
         '''
         We have two options for writing depending on
         the arguments, write a single tag, or write an array
+
+        returns a tuple (tag, value, error)
         '''
         return self._writeTag(tag, value, datatype)
-
-    def MultiRead(self, tags):
-        '''
-        Read multiple tags in one request
-        '''
-        return self._multiRead(tags)
 
     def GetPLCTime(self, raw=False):
         '''
         Get the PLC's clock time, return as human readable (default) or raw if raw=True
+
+        returns a tuple (None, value, error)
         '''
         return self._getPLCTime(raw)
 
@@ -117,7 +117,7 @@ class PLC:
         '''
         return self._setPLCTime()
 
-    def GetTagList(self, allTags = True):
+    def GetTagList(self, allTags=True):
         '''
         Retrieves the tag list from the PLC
         Optional parameter allTags set to True
@@ -139,7 +139,6 @@ class PLC:
         Retrieves a program tag list from the PLC
         programName = "Program:ExampleProgram"
         '''
-
         # Ensure programNames is not empty 
         if not programNames:
             self._getTagList()
@@ -152,7 +151,6 @@ class PLC:
         if programName not in programNames:
             print("Program not found, please check name!")
             return None
-
 
     def GetProgramsList(self):
         '''
@@ -184,14 +182,16 @@ class PLC:
 
     def _readTag(self, tag, elements, dt):
         '''
-        processes the read request
+        Processes the read request
         '''
         self.Offset = 0
         
         if not self._connect(): return None
 
         t,b,i = _parseTagName(tag, 0)
-        self._initial_read(t, b, dt)
+        resp = self._initial_read(t, b, dt)
+        if resp[2] != 0 and resp[2] != 6:
+            return tag, None, get_error_code(resp[2])
 
         datatype = self.KnownTags[b][0]
         bitCount = self.CIPTypes[datatype][0] * 8
@@ -209,7 +209,6 @@ class PLC:
 
             tagData = self._buildTagIOI(tag, isBoolArray=False)
             words = _getWordCount(bitPos, elements, bitCount)
-
             readRequest = self._addReadIOI(tagData, words)
         else:
             # everything else
@@ -220,13 +219,10 @@ class PLC:
         status, retData = self._getBytes(eipHeader)
 
         if status == 0 or status == 6:
-            return self._parseReply(tag, elements, retData)
+            return_value = self._parseReply(tag, elements, retData)
+            return tag, return_value, get_error_code(status)
         else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Read failed: {}'.format(err))       
+            return tag, None, get_error_code(status)
 
     def _writeTag(self, tag, value, dt):
         '''
@@ -238,8 +234,10 @@ class PLC:
         if not self._connect(): return None
 
         t,b,i = _parseTagName(tag, 0)
-        self._initial_read(t, b, dt)
-
+        resp = self._initial_read(t, b, dt)
+        if resp[2] != 0 and resp[2] != 6:
+            return (tag, None, get_error_code(resp[2]))
+        
         dataType = self.KnownTags[b][0]
 
         # check if values passed were a list
@@ -271,15 +269,8 @@ class PLC:
         eipHeader = self._buildEIPHeader(writeRequest)
         status, retData = self._getBytes(eipHeader)
 
-        if status == 0:
-            return
-        else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Write Failed: {}'.format(err))
-    
+        return tag, None, get_error_code(status)
+
     def _multiRead(self, tags):
         '''
         Processes the multiple read request
@@ -298,8 +289,10 @@ class PLC:
             else:
                 tag_name, base, ind = _parseTagName(tag, 0)
                 self._initial_read(tag_name, base, None)
-        
-            dataType = self.KnownTags[base][0]
+            if base in self.KnownTags.keys():
+                dataType = self.KnownTags[base][0]
+            else:
+                dataType = None
             if dataType == 211:
                 tagIOI = self._buildTagIOI(tag_name, isBoolArray=True)
             else:
@@ -327,14 +320,7 @@ class PLC:
         eipHeader = self._buildEIPHeader(readRequest)
         status, retData = self._getBytes(eipHeader)
 
-        if status == 0:
-            return self._multiParser(tags, retData)
-        else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Multi-read failed: {}'.format(err))
+        return self._multiParser(tags, retData)
 
     def _getPLCTime(self, raw=False):
         '''
@@ -363,20 +349,18 @@ class PLC:
         
         eipHeader = self._buildEIPHeader(AttributePacket)
         status, retData = self._getBytes(eipHeader)
-
+        
         if status == 0:
             # get the time from the packet
-            plcTime = unpack_from('<Q', retData, 56)[0]
+            plc_time = unpack_from('<Q', retData, 56)[0]
             if raw:
-                return plcTime
-            humanTime = datetime(1970, 1, 1) + timedelta(microseconds=plcTime)
-            return humanTime
-        else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
+                value = plc_time
             else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Failed to get PLC time: {}'.format(err))
+                value = datetime(1970, 1, 1) + timedelta(microseconds=plc_time)
+        else:
+            value = None
+
+        return None, value, get_error_code(status)
 
     def _setPLCTime(self):
         '''
@@ -407,14 +391,7 @@ class PLC:
         eipHeader = self._buildEIPHeader(AttributePacket)
         status, retData = self._getBytes(eipHeader)
 
-        if status == 0:
-            return
-        else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Failed to set PLC time: {}'.format(err))
+        return None, Time, get_error_code(status)
 
     def _getTagList(self):
         '''
@@ -432,11 +409,7 @@ class PLC:
         if status == 0 or status == 6:
             self._extractTagPacket(retData, programName=None)
         else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Failed to get tag list {}'.format(err))
+            return None, None, get_error_code(status)
 
         while status == 6:
             self.Offset += 1
@@ -446,11 +419,7 @@ class PLC:
             if status == 0 or status == 6:
                 self._extractTagPacket(retData, programName=None)
             else:
-                if status in cipErrorCodes.keys():
-                    err = cipErrorCodes[status]
-                else:
-                    err = 'Unknown error {}'.format(status)
-                raise ValueError('Failed to get tag list: {}'.format(err))
+                return None, None, get_error_code(stauts)
 
         return
 
@@ -472,11 +441,7 @@ class PLC:
             if status == 0 or status == 6:
                 self._extractTagPacket(retData, programName)
             else:
-                if status in cipErrorCodes.keys():
-                    err = cipErrorCodes[status]
-                else:
-                    err = 'Unknown error {}'.format(status)
-                raise ValueError('Failed to get program tag list: {}'.format(err))
+                return None, None, get_error_code(status)
 
             while status == 6:
                 self.Offset += 1
@@ -486,11 +451,7 @@ class PLC:
                 if status == 0 or status == 6:
                     self._extractTagPacket(retData, programName)
                 else:
-                    if status in cipErrorCodes.keys():
-                        err = cipErrorCodes[status]
-                    else:
-                        err = 'Unknown error {}'.format(status)
-                    raise ValueError('Failed to get program tag list: {}'.format(err))
+                    return None, None, get_error_code(status)
 
         return
 
@@ -509,11 +470,7 @@ class PLC:
         if status == 0 or status == 6:
             self._extractTagPacket(self, retData, programName)
         else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Failed to get program tag list: {}'.format(err))
+            return None, None, get_error_code(status)
 
         while status == 6:
             self.Offset += 1
@@ -523,11 +480,7 @@ class PLC:
             if status == 0 or status == 6:
                 self.extractTagPacket(retData, programName)
             else:
-                if status in cipErrorCodes.keys():
-                    err = cipErrorCodes[status]
-                else:
-                    err = 'Unknown error {}'.format(status)
-                raise ValueError('Failed to get program tag list: {}'.format(err))
+                return None, None, get_error_code(status)
 
         return
 
@@ -1426,11 +1379,11 @@ class PLC:
         '''
         # if a tag alread exists, return True
         if baseTag in self.KnownTags:
-            return True
+            return [tag, None, 0]
         
         if dt:
             self.KnownTags[baseTag] = (dt, 0)
-            return True
+            return [tag, None, 0]
         
         tagData = self._buildTagIOI(baseTag, isBoolArray=False)
         readRequest = self._addPartialReadIOI(tagData, 1)
@@ -1442,15 +1395,11 @@ class PLC:
         # make sure it was successful
         if status == 0 or status == 6:
             dataType = unpack_from('<B', retData, 50)[0]
-            dataLen = unpack_from('<H', retData, 2)[0] # this is really just used for STRING
+            dataLen = unpack_from('<H', retData, 2)[0]
             self.KnownTags[baseTag] = (dataType, dataLen)
-            return True
+            return [tag, None, 0]
         else:
-            if status in cipErrorCodes.keys():
-                err = cipErrorCodes[status]
-            else:
-                err = 'Unknown error {}'.format(status)
-            raise ValueError('Failed to read tag: {}'.format(err))
+            return [tag, None, status]
 
     def _wordsToBits(self, tag, value, count=0):
         '''
@@ -1495,26 +1444,30 @@ class PLC:
             # successful reply, add the value to our list
             if replyStatus == 0 and replyExtended == 0:
                 dataTypeValue = unpack_from('<B', stripped, offset+4)[0]
+                error = get_error_code(replyStatus)
                 # if bit of word was requested
                 if BitofWord(tag):
                     dataTypeFormat = self.CIPTypes[dataTypeValue][2]
                     val = unpack_from(dataTypeFormat, stripped, offset+6)[0]
                     bitState = _getBitOfWord(tag, val)
-                    reply.append(bitState)
+                    response = tag, bitState, error
                 elif dataTypeValue == 211:
                     dataTypeFormat = self.CIPTypes[dataTypeValue][2]
                     val = unpack_from(dataTypeFormat, stripped, offset+6)[0]
                     bitState = _getBitOfWord(tag, val)
-                    reply.append(bitState)
+                    response = tag, bitState, error
                 elif dataTypeValue == 160:
                     strlen = unpack_from('<B', stripped, offset+8)[0]
                     s = stripped[offset+12:offset+12+strlen]
-                    reply.append(str(s.decode('utf-8')))
+                    value = str(s.decode('utf-8'))
+                    response = tag, value, error
                 else:
                     dataTypeFormat = self.CIPTypes[dataTypeValue][2]
-                    reply.append(unpack_from(dataTypeFormat, stripped, offset+6)[0])
+                    value = unpack_from(dataTypeFormat, stripped, offset+6)[0]
+                    response = tag, value, error
             else:
-                reply.append("Error")
+                response = tag, None, get_error_code(replyStatus)
+            reply.append(response)
 
         return reply
 
@@ -1742,6 +1695,16 @@ class LgxTag:
         self.Array = 0x00
         self.Struct = 0x00
         self.Size = 0x00
+
+def get_error_code(status):
+    '''
+    Get the CIP error code string
+    '''
+    if status in cipErrorCodes.keys():
+        err = cipErrorCodes[status]
+    else:
+        err = 'Unknown error {}'.format(status)
+    return err
 
 cipErrorCodes = {0x00: 'Success',
                  0x01: 'Connection failure',

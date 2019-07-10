@@ -21,6 +21,6 @@ from pylogix import PLC
 with PLC() as comm:
     comm = PLC()
     comm.IPAddress = '192.168.1.9'
-    values = comm.Read('LargeArray[0]', 500)
+    values = comm.Read('LargeArray[0]', 500)[1]
     print(values)
     

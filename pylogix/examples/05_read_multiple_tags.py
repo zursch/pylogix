@@ -32,4 +32,5 @@ with PLC() as comm:
     comm = PLC()
     comm.IPAddress = '192.168.1.9'
     value = comm.Read(tag_list)
-    print(value)
+    for v in value:
+        print(v[1])

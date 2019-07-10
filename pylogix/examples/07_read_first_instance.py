@@ -36,12 +36,12 @@ with PLC() as comm:
     read = True
     while read:
         try:
-            value = comm.Read('PE040')
+            value = comm.Read('PE040')[1]
             time.sleep(1)
             if value:
                 FaultHappend()
                 while value:
-                    value = comm.Read('PE040')
+                    value = comm.Read('PE040')[1]
                     time.sleep(1)
         except KeyboardInterrupt:
             print('exiting')
