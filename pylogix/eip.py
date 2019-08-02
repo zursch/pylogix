@@ -22,11 +22,9 @@ import sys
 import time
 
 from datetime import datetime, timedelta
-from .lgxDevice import LGXDevice
+from .lgxDevice import LGXDevice, GetDevice, GetVendor
 from random import randrange
 from struct import pack, unpack_from
-
-programNames = []
 
 class PLC:
 
@@ -53,6 +51,7 @@ class PLC:
         self.Offset = 0
         self.KnownTags = {}
         self.TagList = []
+        self.ProgramNames = []
         self.StructIdentifier = 0x0fCE
         self.CIPTypes = {160:(88 ,"STRUCT", 'B'),
                          193:(1, "BOOL", '?'),
@@ -124,15 +123,10 @@ class PLC:
         If is set to False, it will return only controller
         otherwise controller tags and program tags.
         '''
-        if allTags:
-            self._getTagList()
-            self._getAllProgramsTags()
-        else:
-            self._getTagList()
-            
-        self._getUDT()
+        tag_list = self._getTagList(allTags)
+        updated_list = self._getUDT(tag_list[1])
         
-        return self.TagList
+        return None, updated_list, tag_list[2]
 
     def GetProgramTagList(self, programName):
         '''
@@ -140,17 +134,16 @@ class PLC:
         programName = "Program:ExampleProgram"
         '''
         # Ensure programNames is not empty 
-        if not programNames:
-            self._getTagList()
+        if not self.ProgramNames:
+            tags = self._getTagList(False)
         
         # Get a single program tags if progragName exists
-        if programName in programNames:
+        if programName in self.ProgramNames:
             program_tags = self._getProgramTagList(programName)
-            self._getUDT()
-            return self.TagList
-        if programName not in programNames:
-            print("Program not found, please check name!")
-            return None
+            program_tags = self._getUDT(program_tags[1])
+            return None, program_tags, tags[2]
+        else:
+            return None, None, 'Program not found, please check name!'
 
     def GetProgramsList(self):
         '''
@@ -158,9 +151,9 @@ class PLC:
         Sanity check: checks if programNames is empty
         and runs _getTagList
         '''
-        if not programNames:
-            self._getTagList()
-        return programNames
+        if not self.ProgramNames:
+            tag_list = self._getTagList(True)
+        return None, self.ProgramNames, tag_list[2]
 
     def Discover(self):
         '''
@@ -393,21 +386,20 @@ class PLC:
 
         return None, Time, get_error_code(status)
 
-    def _getTagList(self):
+    def _getTagList(self, allTags):
         '''
         Requests the controller tag list and returns a list of LgxTag type
         '''
         if not self._connect(): return None
 
         self.Offset = 0
-        del programNames[:]
-        del self.TagList[:]
+        tags = []
 
         request = self._buildTagListRequest(programName=None)
         eipHeader = self._buildEIPHeader(request)
         status, retData = self._getBytes(eipHeader)
         if status == 0 or status == 6:
-            self._extractTagPacket(retData, programName=None)
+            tags += self._extractTagPacket(retData, programName=None)
         else:
             return None, None, get_error_code(status)
 
@@ -417,43 +409,34 @@ class PLC:
             eipHeader = self._buildEIPHeader(request)
             status, retData = self._getBytes(eipHeader)
             if status == 0 or status == 6:
-                self._extractTagPacket(retData, programName=None)
+                tags += self._extractTagPacket(retData, programName=None)
             else:
                 return None, None, get_error_code(stauts)
 
-        return
+        if allTags:
+            for program_name in self.ProgramNames:
 
-    def _getAllProgramsTags(self):
-        '''
-        Requests all programs tag list and appends to taglist (LgxTag type)
-        '''
-        if not self._connect(): return None
+                self.Offset = 0
 
-        self.Offset = 0
-
-        for programName in programNames:
-
-            self.Offset = 0
-
-            request = self._buildTagListRequest(programName)
-            eipHeader = self._buildEIPHeader(request)
-            status, retData = self._getBytes(eipHeader)
-            if status == 0 or status == 6:
-                self._extractTagPacket(retData, programName)
-            else:
-                return None, None, get_error_code(status)
-
-            while status == 6:
-                self.Offset += 1
-                request = self._buildTagListRequest(programName)
+                request = self._buildTagListRequest(program_name)
                 eipHeader = self._buildEIPHeader(request)
                 status, retData = self._getBytes(eipHeader)
                 if status == 0 or status == 6:
-                    self._extractTagPacket(retData, programName)
+                    tags += self._extractTagPacket(retData, program_name)
                 else:
                     return None, None, get_error_code(status)
 
-        return
+                while status == 6:
+                    self.Offset += 1
+                    request = self._buildTagListRequest(program_name)
+                    eipHeader = self._buildEIPHeader(request)
+                    status, retData = self._getBytes(eipHeader)
+                    if status == 0 or status == 6:
+                        tags += self._extractTagPacket(retData, program_name)
+                    else:
+                        return None, None, get_error_code(status)
+
+        return None, tags, get_error_code(status)
 
     def _getProgramTagList(self, programName):
         '''
@@ -462,13 +445,13 @@ class PLC:
         if not self._connect(): return None
 
         self.Offset = 0
-        del self.TagList[:]
+        tags = []
 
         request = self._buildTagListRequest(programName)
         eipHeader = self._buildEIPHeader(request)
         status, retData = self._getBytes(eipHeader)
         if status == 0 or status == 6:
-            self._extractTagPacket(self, retData, programName)
+            tags += self._extractTagPacket(retData, programName)
         else:
             return None, None, get_error_code(status)
 
@@ -478,16 +461,15 @@ class PLC:
             eipHeader = self._buildEIPHeader(request)
             status, retData = self._getBytes(eipHeader)
             if status == 0 or status == 6:
-                self.extractTagPacket(retData, programName)
+                tags += self._extractTagPacket(retData, programName)
             else:
                 return None, None, get_error_code(status)
 
-        return
+        return None, tags, get_error_code(status)
 
-    def _getUDT(self):
-        
+    def _getUDT(self, tag_list):
         # get only tags that are a struct
-        struct_tags = [x for x in self.TagList if x.Struct == 1]
+        struct_tags = [x for x in tag_list if x.Struct == 1]
         # reduce our struct tag list to only unique instances
         seen = set() 
         unique = [obj for obj in struct_tags if obj.DataTypeValue not in seen and not seen.add(obj.DataTypeValue)]
@@ -512,19 +494,18 @@ class PLC:
             split_char = pack('<b', 0x3b)
             name = members[0].split(split_char)[0]
             template[key][1] = str(name.decode('utf-8'))
-            
-        for tag in self.TagList:
+
+        for tag in tag_list:
             if tag.DataTypeValue in template:
                 tag.DataType = template[tag.DataTypeValue][1]
             elif tag.SymbolType in self.CIPTypes:
                 tag.DataType = self.CIPTypes[tag.SymbolType][1]
-        return
+        return tag_list
 
     def _getTemplateAttribute(self, instance):
         '''
         Get the attributes of a UDT
         '''
-        
         if not self._connect(): return None
         
         readRequest = self._buildTemplateAttributes(instance)
@@ -682,7 +663,6 @@ class PLC:
             return _parseIdentityResponse(retData)
         else:
             return LGXDevice()
-
 
     def _connect(self):
         '''
@@ -1500,6 +1480,7 @@ class PLC:
     def _extractTagPacket(self, data, programName):
         # the first tag in a packet starts at byte 50
         packetStart = 50
+        tag_list = []
 
         while packetStart < len(data):
             # get the length of the tag name
@@ -1521,12 +1502,16 @@ class PLC:
             elif 'Task:' in tag.TagName:
                 pass
             else:
-                self.TagList.append(tag)
+                #self.TagList.append(tag)
+                tag_list.append(tag)
             if not programName:
                 if 'Program:' in tag.TagName:
-                    programNames.append(tag.TagName)
+                    #programNames.append(tag.TagName)
+                    self.ProgramNames.append(tag.TagName)
             # increment ot the next tag in the packet
             packetStart = packetStart+tagLen+20
+
+        return tag_list
 
     def _makeString(self, string):
         work = []

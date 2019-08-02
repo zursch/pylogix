@@ -18,6 +18,6 @@ with PLC() as comm:
     comm.IPAddress = '192.168.1.9'
     tags = comm.GetTagList()
     
-    for t in tags:
+    for t in tags[1]:
         print(t.TagName, t.DataType)
 

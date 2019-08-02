@@ -17,6 +17,6 @@ with PLC() as comm:
     tags = comm.GetTagList()
 
 with open('tag_list.txt', 'w') as f:
-    for t in tags:
+    for t in tags[1]:
         f.write('%s %d \n' %(t.TagName, t.DataType))
 
