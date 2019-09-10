@@ -85,7 +85,7 @@ class PLC:
         '''
         if isinstance(tag, (list, tuple)):
             if len(tag) == 1:
-                return [ self._readTag(tag[0], count, datatype) ]
+                return [ self.Read(tag[0], count, datatype) ]
             if datatype:
                 raise TypeError('Datatype should be set to None when reading lists')
             return self._multiRead(tag)
